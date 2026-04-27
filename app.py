@@ -21,15 +21,29 @@ TMDB_IMG = "https://image.tmdb.org/t/p/w500"
 st.set_page_config(page_title="Movie Recommender", page_icon="🎬", layout="wide")
 
 # =============================
-# STYLES (minimal modern)
+# RESPONSIVE SETTINGS
+# =============================
+is_mobile = st.query_params.get("mobile") == "true"
+if "is_mobile" not in st.session_state:
+    st.session_state.is_mobile = is_mobile
+
+# =============================
+# STYLES (responsive + mobile-friendly)
 # =============================
 st.markdown(
     """
 <style>
+@media (max-width: 768px) {
+  .block-container { padding-top: 0.5rem; padding-bottom: 1rem; max-width: 100%; }
+  .small-muted { font-size: 0.85rem; }
+  .movie-title { font-size: 0.8rem; }
+  .stTabs { margin-top: 0.5rem; }
+}
 .block-container { padding-top: 1rem; padding-bottom: 2rem; max-width: 1400px; }
 .small-muted { color:#6b7280; font-size: 0.92rem; }
 .movie-title { font-size: 0.9rem; line-height: 1.15rem; height: 2.3rem; overflow: hidden; }
 .card { border: 1px solid rgba(0,0,0,0.08); border-radius: 16px; padding: 14px; background: rgba(255,255,255,0.7); }
+.stImage { max-height: 100%; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -74,7 +88,7 @@ def goto_details(tmdb_id: int):
 # =============================
 # API HELPERS
 # =============================
-@st.cache_data(ttl=30)  # short cache for autocomplete
+@st.cache_data(ttl=3600)  # cache for 1 hour; change params to bust
 def api_get_json(path: str, params: dict | None = None):
     last_error = None
 
@@ -91,10 +105,20 @@ def api_get_json(path: str, params: dict | None = None):
     return None, last_error or "Request failed"
 
 
+def get_responsive_cols(suggested_cols: int) -> int:
+    """Reduce column count on mobile."""
+    if st.session_state.is_mobile:
+        return max(2, min(3, suggested_cols))
+    return suggested_cols
+
+
 def poster_grid(cards, cols=6, key_prefix="grid"):
     if not cards:
         st.info("No movies to show.")
         return
+    
+    # Apply responsive column adjustment
+    cols = get_responsive_cols(cols)
 
     rows = (len(cards) + cols - 1) // cols
     idx = 0
@@ -216,7 +240,7 @@ def parse_tmdb_search_to_cards(data, keyword: str, limit: int = 24):
 
 
 # =============================
-# SIDEBAR (clean)
+# SIDEBAR (responsive)
 # =============================
 with st.sidebar:
     st.markdown("## 🎬 Menu")
@@ -224,13 +248,16 @@ with st.sidebar:
         goto_home()
 
     st.markdown("---")
-    st.markdown("### 🏠 Home Feed (only home)")
+    st.markdown("### 🏠 Browse")
     home_category = st.selectbox(
         "Category",
         ["trending", "popular", "top_rated", "now_playing", "upcoming"],
         index=0,
     )
-    grid_cols = st.slider("Grid columns", 4, 8, 6)
+    
+    # Adaptive grid columns based on screen width
+    default_cols = 3 if st.session_state.is_mobile else 6
+    grid_cols = st.slider("Grid columns", 2, 8, default_cols)
 
 # =============================
 # HEADER
@@ -286,9 +313,10 @@ if st.session_state.view == "home":
     # HOME FEED MODE
     st.markdown(f"### 🏠 Home — {home_category.replace('_',' ').title()}")
 
-    home_cards, err = api_get_json(
-        "/home", params={"category": home_category, "limit": 24}
-    )
+    with st.spinner("Loading movies..."):
+        home_cards, err = api_get_json(
+            "/home", params={"category": home_category, "limit": 24}
+        )
     if err or not home_cards:
         st.error(f"Home feed failed: {err or 'Unknown error'}")
         st.stop()
@@ -315,23 +343,22 @@ elif st.session_state.view == "details":
             goto_home()
 
     # Details (your FastAPI safe route)
-    data, err = api_get_json(f"/movie/id/{tmdb_id}")
+    with st.spinner("Loading movie details..."):
+        data, err = api_get_json(f"/movie/id/{tmdb_id}")
     if err or not data:
         st.error(f"Could not load details: {err or 'Unknown error'}")
         st.stop()
 
-    # Layout: Poster LEFT, Details RIGHT
-    left, right = st.columns([1, 2.4], gap="large")
-
-    with left:
+    # Layout: Poster LEFT, Details RIGHT (or stacked on mobile)
+    if st.session_state.is_mobile:
+        # Mobile: stack vertically
         st.markdown("<div class='card'>", unsafe_allow_html=True)
         if data.get("poster_url"):
             st.image(data["poster_url"], use_container_width=True)
         else:
             st.write("🖼️ No poster")
         st.markdown("</div>", unsafe_allow_html=True)
-
-    with right:
+        
         st.markdown("<div class='card'>", unsafe_allow_html=True)
         st.markdown(f"## {data.get('title','')}")
         release = data.get("release_date") or "-"
@@ -346,6 +373,32 @@ elif st.session_state.view == "details":
         st.markdown("### Overview")
         st.write(data.get("overview") or "No overview available.")
         st.markdown("</div>", unsafe_allow_html=True)
+    else:
+        # Desktop: side by side
+        left, right = st.columns([1, 2.4], gap="large")
+        with left:
+            st.markdown("<div class='card'>", unsafe_allow_html=True)
+            if data.get("poster_url"):
+                st.image(data["poster_url"], use_container_width=True)
+            else:
+                st.write("🖼️ No poster")
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        with right:
+            st.markdown("<div class='card'>", unsafe_allow_html=True)
+            st.markdown(f"## {data.get('title','')}")
+            release = data.get("release_date") or "-"
+            genres = ", ".join([g["name"] for g in data.get("genres", [])]) or "-"
+            st.markdown(
+                f"<div class='small-muted'>Release: {release}</div>", unsafe_allow_html=True
+            )
+            st.markdown(
+                f"<div class='small-muted'>Genres: {genres}</div>", unsafe_allow_html=True
+            )
+            st.markdown("---")
+            st.markdown("### Overview")
+            st.write(data.get("overview") or "No overview available.")
+            st.markdown("</div>", unsafe_allow_html=True)
 
     if data.get("backdrop_url"):
         st.markdown("#### Backdrop")
@@ -354,7 +407,7 @@ elif st.session_state.view == "details":
     st.divider()
     st.markdown("### ✅ Recommendations")
 
-    # Recommendations (TF-IDF + Genre) via your bundle endpoint
+    # Recommendations via your bundle endpoint
     title = (data.get("title") or "").strip()
     if title:
         bundle, err2 = api_get_json(
@@ -363,7 +416,7 @@ elif st.session_state.view == "details":
         )
 
         if not err2 and bundle:
-            st.markdown("#### 🔎 Similar Movies (TF-IDF)")
+            st.markdown("#### 🔎 Similar Movies")
             poster_grid(
                 to_cards_from_tfidf_items(bundle.get("tfidf_recommendations")),
                 cols=grid_cols,
