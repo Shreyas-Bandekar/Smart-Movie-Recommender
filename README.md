@@ -31,3 +31,4 @@ If you want to force a specific backend, set `API_BASE` before launching Streaml
 
 - The backend now prefers the `models/` folder and still falls back to the project root for older artifact layouts.
 - The notebook filename is still `moveis.ipynb`; it looks like a typo, but I left it unchanged to avoid breaking references.
+  
